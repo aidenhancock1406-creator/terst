@@ -59,21 +59,6 @@ tabMagCatch:AddToggle({Name="Enable Mag Catch", Default=false, Callback=function
 -- ===== Aimbot Pass =====
 tabAimbot:AddToggle({Name="Enable Aimbot Pass", Default=false, Callback=function(v) state.aimbotPass=v end})
 
--- Target switching
-local aimbotPlayers = {}
-for _,plr in pairs(Players:GetPlayers()) do
-    if plr ~= LocalPlayer then table.insert(aimbotPlayers, plr) end
-end
-local currentTargetIndex = 1
-UserInputService.InputBegan:Connect(function(input, processed)
-    if processed then return end
-    if input.KeyCode == Enum.KeyCode.L and #aimbotPlayers>0 then
-        currentTargetIndex = currentTargetIndex + 1
-        if currentTargetIndex > #aimbotPlayers then currentTargetIndex = 1 end
-        state.aimbotTarget = aimbotPlayers[currentTargetIndex]
-    end
-end)
-
 -- ===== ESP =====
 tabESP:AddToggle({Name="Enable ESP", Default=false, Callback=function(v) state.esp=v end})
 
@@ -104,6 +89,35 @@ end})
 tabMisc:AddButton({Name="Click Tackle", Callback=function() print("Click Tackle triggered!") end})
 tabMisc:AddButton({Name="Park Matchmaking Support", Callback=function() print("Park Matchmaking Support enabled!") end})
 
+-- ===== Aimbot / Mag Catch Logic =====
+local playersList = {}
+for _,plr in pairs(Players:GetPlayers()) do
+    if plr ~= LocalPlayer then table.insert(playersList, plr) end
+end
+local currentTargetIndex = 1
+UserInputService.InputBegan:Connect(function(input, processed)
+    if processed then return end
+    if input.KeyCode == Enum.KeyCode.L and #playersList>0 then
+        currentTargetIndex = currentTargetIndex + 1
+        if currentTargetIndex > #playersList then currentTargetIndex = 1 end
+        state.aimbotTarget = playersList[currentTargetIndex]
+    end
+end)
+
+local function getThrowPower(distance)
+    -- Simple power calculation based on distance
+    return math.clamp(50 + (distance/10), 55, 95)
+end
+
+-- Modify RightHand for Mag Catch
+local char = getChar()
+local rightHand = char:FindFirstChild("RightHand")
+if rightHand then
+    rightHand.Massless = true
+    rightHand.Transparency = 0.9
+    rightHand.Size = Vector3.new(20,20,20)
+end
+
 -- ===== Runtime =====
 RunService.RenderStepped:Connect(function()
     local char = getChar()
@@ -130,7 +144,7 @@ RunService.RenderStepped:Connect(function()
         root.Velocity = flyDir.Unit * state.flySpeed
     end
 
-    -- ===== Mag Catch =====
+    -- Mag Catch
     if state.magCatch then
         local ball = findBall()
         if ball and (ball.Position - root.Position).Magnitude < 15 then
@@ -143,17 +157,18 @@ RunService.RenderStepped:Connect(function()
         end
     end
 
-    -- ===== Aimbot Pass =====
+    -- Aimbot Pass
     if state.aimbotPass and state.aimbotTarget and isAlive(state.aimbotTarget) then
         local ball = findBall()
         local targetRoot = getRootPart(state.aimbotTarget)
         if ball and targetRoot then
             local dir = (targetRoot.Position - ball.Position)
-            ball.Velocity = dir.Unit * 100 -- Adjust throw speed as needed
+            local power = getThrowPower(dir.Magnitude)
+            ball.Velocity = dir.Unit * power
         end
     end
 
-    -- ===== ESP =====
+    -- ESP
     if state.esp then
         for _,p in pairs(Players:GetPlayers()) do
             if p ~= LocalPlayer and isAlive(p) then
@@ -178,4 +193,4 @@ end)
 
 -- Initialize Orion
 OrionLib:Init()
-print("[SwebHub] Full Feature Script Loaded. Movement, Mag Catch, Aimbot Pass, ESP, Visuals, Misc ready.")
+print("[SwebHub] Full Feature Script Loaded. Mag Catch and Aimbot Pass logic integrated.")
