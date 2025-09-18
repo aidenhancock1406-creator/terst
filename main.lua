@@ -1,530 +1,771 @@
--- Sweb Hub v1.1 - NFL Universe (SZN1) tuned
--- Tabs: Pass Assist (QB Aimbot), Movement, Player, Combat, Utility, Settings
--- Notes: Auto-pass attempts several client techniques (Tool:Activate and tries common remote names).
--- You may need to tweak remote names if the game uses custom/obfuscated remotes.
+-- Sweb Hub - NFL Universe (All requested features)
+-- Single-file OrionLib script
+-- Drop into executor that supports loadstring, Drawing API, BodyGyro/BodyVelocity, etc.
 
 local OrionLib = loadstring(game:HttpGet(('https://raw.githubusercontent.com/aidenhancock1406-creator/terst/refs/heads/main/source.lua')))()
-local Window = OrionLib:MakeWindow({
-    Name = "Sweb Hub - NFL Universe",
-    HidePremium = false,
-    SaveConfig = true,
-    ConfigFolder = "SwebHubConfig",
-    IntroEnabled = true,
-    IntroText = "Sweb Hub for SZN1 - NFL Universe",
-    IntroIcon = "https://example.com/nfl_icon.png"
-})
 
--- Services
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
-
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local LocalPlayer = Players.LocalPlayer
-local camera = Workspace.CurrentCamera
-local mouse = LocalPlayer:GetMouse()
+local Camera = Workspace.CurrentCamera
+local Mouse = LocalPlayer:GetMouse()
 
--- Helpers
+-- ====== Utilities ======
 local function getChar(plr)
     plr = plr or LocalPlayer
     return plr.Character or plr.CharacterAdded:Wait()
 end
 local function getHumanoid(plr)
     local c = getChar(plr)
-    if c then return c:FindFirstChildOfClass("Humanoid") end
-    return nil
+    return c and c:FindFirstChildOfClass("Humanoid")
 end
-local function getRoot(plr)
+local function getRootPart(plr)
     local c = getChar(plr)
-    if c then return c:FindFirstChild("HumanoidRootPart") or c:FindFirstChild("Torso") or c:FindFirstChild("UpperTorso") end
-    return nil
+    if not c then return nil end
+    return c:FindFirstChild("HumanoidRootPart") or c:FindFirstChild("Torso") or c:FindFirstChild("UpperTorso")
 end
 local function isAlive(plr)
     local hum = getHumanoid(plr)
     return hum and hum.Health > 0
 end
-
--- Attempt to find ball/tool or a "hasBall" marker for the local player
-local function playerHasBall()
-    -- try common patterns: Tool named "Football" in character or backpack, or BoolValue "HasBall" in player/char
-    local c = getChar()
-    for _,tool in pairs(LocalPlayer.Backpack:GetChildren()) do
-        if tool:IsA("Tool") and string.lower(tool.Name):find("ball") or string.lower(tool.Name):find("football") then
-            return tool
-        end
-    end
-    if c then
-        for _,tool in pairs(c:GetChildren()) do
-            if tool:IsA("Tool") and (string.lower(tool.Name):find("ball") or string.lower(tool.Name):find("football")) then
-                return tool
+local function findBall()
+    -- Try common places for the football object in NFL Universe
+    -- ADJUST IF NEEDED: name "Football" or a part in workspace named "Ball"
+    local ball = Workspace:FindFirstChild("Football") or Workspace:FindFirstChild("Ball") or Workspace:FindFirstChild("football")
+    if not ball then
+        -- try searching descendants
+        for _,obj in pairs(Workspace:GetDescendants()) do
+            if obj:IsA("BasePart") and string.match(string.lower(obj.Name), "ball") then
+                return obj
             end
         end
     end
-    -- search for bool/values that indicate ball possession
-    for _,v in pairs(LocalPlayer:GetDescendants()) do
-        if (v:IsA("BoolValue") or v:IsA("IntValue") or v:IsA("NumberValue")) and string.lower(v.Name):find("ball") then
-            if tostring(v.Value) ~= "0" then return true end
-        end
-    end
-    return nil
+    return ball
 end
-
--- Utility: search for likely pass remotes (print list)
-local function scanForPassRemotes()
-    local candidates = {}
-    local function checkContainer(ct)
-        for _,obj in pairs(ct:GetChildren()) do
-            if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
-                local n = string.lower(obj.Name)
-                if n:find("pass") or n:find("throw") or n:find("passball") or n:find("kick") or n:find("throwball") or n:find("fire") then
-                    table.insert(candidates, obj)
-                end
-            end
-        end
-    end
-    pcall(function() checkContainer(ReplicatedStorage) end)
-    pcall(function() checkContainer(Workspace) end)
-    pcall(function() checkContainer(LocalPlayer) end)
-    print("[SwebHub] pass remote candidates found:", #candidates)
-    for i,v in pairs(candidates) do print(i, v:GetFullName()) end
-    return candidates
-end
-
--- PASS ASSIST / QB AIMBOT tab
-local tabAimbot = Window:MakeTab({
-    Name = "Pass Assist",
-    Icon = "rbxassetid://3926307978",
-    PremiumOnly = false
-})
-
--- Variables
-local passAssistEnabled = false
-local passAutoThrow = false
-local passHoldAim = Enum.UserInputType.MouseButton2 -- RMB hold to aim
-local passFOV = 120 -- in degrees-ish (we map to pixels)
-local passSmooth = 0.2
-local passTeamCheck = true -- target teammates only
-local passMode = "ClosestToCrosshair" -- "ClosestToQB" or "ClosestToCrosshair"
-
--- UI
-tabAimbot:AddToggle({
-    Name = "Enable Pass Assist (aim while holding RMB)",
-    Default = false,
-    Callback = function(v) passAssistEnabled = v end
-})
-tabAimbot:AddToggle({
-    Name = "Auto Throw (attempt to fire pass automatically)",
-    Default = false,
-    Callback = function(v) passAutoThrow = v end
-})
-tabAimbot:AddSlider({
-    Name = "FOV (pixels approx)",
-    Min = 30,
-    Max = 400,
-    Default = passFOV,
-    Increment = 1,
-    Callback = function(v) passFOV = v end
-})
-tabAimbot:AddSlider({
-    Name = "Smoothing (0 snap)",
-    Min = 0,
-    Max = 1,
-    Default = passSmooth,
-    Increment = 0.01,
-    Callback = function(v) passSmooth = v end
-})
-tabAimbot:AddDropdown({
-    Name = "Target Priority",
-    Default = "ClosestToCrosshair",
-    Options = {"ClosestToCrosshair","ClosestToQB"},
-    Callback = function(v) passMode = v end
-})
-tabAimbot:AddToggle({
-    Name = "Target Teammates Only",
-    Default = true,
-    Callback = function(v) passTeamCheck = v end
-})
-
-tabAimbot:AddButton({
-    Name = "Scan for likely pass remotes (prints results)",
-    Callback = function()
-        scanForPassRemotes()
-    end
-})
-
--- On-screen FOV circle (simple)
-local fovCircle = Drawing and Drawing.new and Drawing.new("Circle") or nil
-local showFOVCircle = true
-if showFOVCircle and fovCircle then
-    fovCircle.Transparency = 0.6
-    fovCircle.Thickness = 1
-end
-
--- pick targets: eligible receivers = other players, alive, on same team (if enabled), in front of QB/within FOV
-local function getEligibleReceivers()
+local function findLikelyReceivers()
     local list = {}
-    for _,plr in pairs(Players:GetPlayers()) do
-        if plr ~= LocalPlayer and isAlive(plr) then
-            if passTeamCheck then
-                if LocalPlayer.Team and plr.Team and LocalPlayer.Team ~= plr.Team then
-                    continue
-                end
-            end
-            local head = plr.Character and plr.Character:FindFirstChild("Head")
-            if head then
-                -- rough check: is in front of QB? angle less than ~130 deg to be considered forward
-                local myRoot = getRoot(LocalPlayer)
-                if myRoot then
-                    local dir = (head.Position - myRoot.Position)
-                    if dir.Magnitude > 0 then
-                        table.insert(list, {plr=plr, head=head, dist=(camera.CFrame.Position - head.Position).Magnitude})
-                    end
-                end
+    for _,p in pairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer and isAlive(p) and p.Character then
+            local head = p.Character:FindFirstChild("Head")
+            local root = getRootPart(p)
+            if head and root then
+                table.insert(list, p)
             end
         end
     end
     return list
 end
 
-local aiming = false
-local currentTarget = nil
+-- Clean up holder
+local CLEANUP = {}
 
--- helper: choose best target based on passMode
-local function chooseTarget(candidates)
-    if #candidates == 0 then return nil end
-    if passMode == "ClosestToQB" then
-        table.sort(candidates, function(a,b) return a.dist < b.dist end)
-        return candidates[1].head
-    else -- ClosestToCrosshair
-        local best, bestDist = nil, 1e9
-        local mousePos = Vector2.new(mouse.X, mouse.Y)
-        for _,c in pairs(candidates) do
-            local sp = camera:WorldToScreenPoint(c.head.Position)
-            local d = (Vector2.new(sp.X, sp.Y) - mousePos).Magnitude
-            if d < bestDist then bestDist = d; best = c.head end
-        end
-        return best
+local function addCleanup(fn)
+    table.insert(CLEANUP, fn)
+end
+local function doCleanup()
+    for _,fn in ipairs(CLEANUP) do
+        pcall(fn)
     end
+    CLEANUP = {}
 end
 
--- attempt to auto-throw the ball to a receiver:
-local function attemptAutoThrow(targetHead)
-    if not targetHead or not targetHead.Parent then return false end
-    -- 1) If player has a tool that looks like a ball, try Tool:Activate() and Tool:FireServer if present
-    local tool = playerHasBall()
-    if tool and tool.Parent then
-        pcall(function()
-            -- many football scripts implement client tool activation that triggers the server.
-            if tool.Parent == LocalPlayer.Character then
-                if tool:FindFirstChild("Activate") and typeof(tool.Activate) == "function" then
-                    tool:Activate()
-                    print("[SwebHub] Activated tool for pass attempt.")
-                else
-                    -- some tools use remote inside the tool
-                    for _,obj in pairs(tool:GetDescendants()) do
-                        if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
-                            pcall(function() obj:FireServer(targetHead.Position) end)
-                        end
-                    end
-                    -- fallback: Trigger tool events via ClickDetector or .Remote (best-effort)
-                end
-            else
-                -- if it's in backpack, equip and activate
-                LocalPlayer.Character.Humanoid:EquipTool(tool)
-                wait(0.05)
-                if tool and tool.Parent == LocalPlayer.Character and tool:FindFirstChild("Activate") and typeof(tool.Activate) == "function" then
-                    tool:Activate()
-                end
-            end
-        end)
-    end
-
-    -- 2) Try firing likely RemoteEvents in ReplicatedStorage/Workspace that match common names
-    local candidates = scanForPassRemotes()
-    for _,r in pairs(candidates) do
-        pcall(function()
-            if r:IsA("RemoteEvent") then
-                -- attempt to send plausible args: target player or position
-                r:FireServer(targetHead.Parent.Name, targetHead.Position) -- many scripts expect (playerName, pos) or (player, pos)
-                print("[SwebHub] Fired RemoteEvent:", r:GetFullName())
-            elseif r:IsA("RemoteFunction") then
-                r:InvokeServer(targetHead.Parent.Name, targetHead.Position)
-                print("[SwebHub] Invoked RemoteFunction:", r:GetFullName())
-            end
-        end)
-    end
-
-    -- 3) If none worked, still return true to indicate we tried
-    return true
-end
-
--- Input handling: aim when holding RMB
-UserInputService.InputBegan:Connect(function(input, gpe)
-    if gpe then return end
-    if input.UserInputType == passHoldAim then
-        aiming = true
-    end
-end)
-UserInputService.InputEnded:Connect(function(input, gpe)
-    if gpe then return end
-    if input.UserInputType == passHoldAim then
-        aiming = false
-        currentTarget = nil
-    end
-end)
-
-RunService.RenderStepped:Connect(function(dt)
-    -- draw fov circle if Drawing available
-    if fovCircle then
-        fovCircle.Position = Vector2.new(mouse.X, mouse.Y)
-        fovCircle.Radius = passFOV
-        fovCircle.Visible = passAssistEnabled and aiming
-    end
-
-    if passAssistEnabled and aiming then
-        local candidates = getEligibleReceivers()
-        if #candidates == 0 then currentTarget = nil return end
-        -- choose target
-        local chosenHead = chooseTarget(candidates)
-        if chosenHead and chosenHead.Parent then
-            currentTarget = chosenHead
-            -- aim camera smoothly
-            local camC = camera.CFrame
-            local desired = CFrame.new(camC.Position, chosenHead.Position)
-            if passSmooth <= 0 then
-                camera.CFrame = desired
-            else
-                camera.CFrame = camC:Lerp(desired, math.clamp(passSmooth * dt * 60, 0, 1))
-            end
-
-            -- auto throw if enabled and we have the ball
-            if passAutoThrow then
-                local hasBall = playerHasBall()
-                if hasBall then
-                    attemptAutoThrow(chosenHead)
-                else
-                    -- some games register possession differently; try checking some indicators and still try remotes
-                    attemptAutoThrow(chosenHead)
-                end
-            end
-        end
-    end
-end)
-
--- Movement tab (stamina, speed, jump, fly, noclip)
-local tabMovement = Window:MakeTab({
-    Name = "Movement",
-    Icon = "rbxassetid://6023426915",
-    PremiumOnly = false
+-- ====== Window & Tabs ======
+local Window = OrionLib:MakeWindow({
+    Name = "Sweb Hub - NFL Tools",
+    HidePremium = false,
+    SaveConfig = true,
+    ConfigFolder = "SwebHubConfig",
+    IntroEnabled = true,
+    IntroText = "Sweb Hub - NFL Universe Tools",
+    IntroIcon = "https://example.com/nfl_icon.png"
 })
 
-local defaultWalk = 16
-local speedActive = false
-local speedValue = 32
-tabMovement:AddToggle({ Name = "Speed Boost", Default = false, Callback = function(v) speedActive = v; local hum = getHumanoid(); if hum then hum.WalkSpeed = v and speedValue or defaultWalk end end})
-tabMovement:AddSlider({ Name = "Speed Amount", Min = 16, Max = 200, Default = speedValue, Increment = 1, Callback = function(v) speedValue = v; if speedActive and getHumanoid() then getHumanoid().WalkSpeed = v end end})
+-- Tabs
+local tabQB = Window:MakeTab({Name="QB", Icon="rbxassetid://4483345998"})
+local tabKicker = Window:MakeTab({Name="Kicker", Icon="rbxassetid://4483345998"})
+local tabMovement = Window:MakeTab({Name="Movement", Icon="rbxassetid://6023426915"})
+local tabPull = Window:MakeTab({Name="Pull Vector", Icon="rbxassetid://4483345998"})
+local tabVisual = Window:MakeTab({Name="Visuals", Icon="rbxassetid://4483345998"})
+local tabMisc = Window:MakeTab({Name="Misc", Icon="rbxassetid://7072727166"})
 
-local jpValue = 50
-tabMovement:AddSlider({ Name = "Jump Power", Min = 50, Max = 250, Default = jpValue, Increment = 1, Callback = function(v) jpValue = v; if getHumanoid() then getHumanoid().JumpPower = v end end})
-
-local flyEnabled = false
-local flySpeed = 60
-tabMovement:AddToggle({ Name = "Fly (for testing)", Default = false, Callback = function(v) flyEnabled = v end })
-tabMovement:AddSlider({ Name = "Fly Speed", Min = 10, Max = 300, Default = flySpeed, Increment = 1, Callback = function(v) flySpeed = v end })
-
-local noclipEnabled = false
-tabMovement:AddToggle({ Name = "Noclip", Default = false, Callback = function(v) noclipEnabled = v end })
-
--- find stamina NumberValue if present
-local function findStamina()
-    local searchPlaces = {LocalPlayer, LocalPlayer:FindFirstChild("leaderstats"), LocalPlayer.Character}
-    for _,root in pairs(searchPlaces) do
-        if root then
-            for _,v in pairs(root:GetDescendants()) do
-                if (v:IsA("NumberValue") or v:IsA("IntValue")) and string.lower(v.Name):find("stam") then
-                    return v
-                end
-            end
-        end
+-- ====== DRAWING HELPERS ======
+local DrawingAvailable = (typeof(drawing) == "table" or type(Drawing) == "table" or type(drawing) == "function")
+local function NewCircle()
+    if DrawingAvailable then
+        local circ = Drawing.new and Drawing.new("Circle") or Drawing.Circle and Drawing.Circle.new and Drawing.Circle.new()
+        return circ
     end
     return nil
 end
-local staminaRef = findStamina()
-local staminaOverride = false
-tabMovement:AddToggle({ Name = "Infinite Stamina", Default = false, Callback = function(v) staminaOverride = v; staminaRef = staminaRef or findStamina(); if staminaRef and v then staminaRef.Value = 9999 end end})
-
--- Movement loops
-local bodyGyro, bodyVel
-RunService.RenderStepped:Connect(function()
-    -- fly
-    local char = getChar()
-    if flyEnabled and char and char.PrimaryPart then
-        if not bodyGyro then
-            bodyGyro = Instance.new("BodyGyro", char.PrimaryPart)
-            bodyVel = Instance.new("BodyVelocity", char.PrimaryPart)
-            bodyGyro.MaxTorque = Vector3.new(1e5,1e5,1e5)
-            bodyGyro.P = 1e4
-            bodyVel.MaxForce = Vector3.new(1e5,1e5,1e5)
-            bodyVel.P = 1e3
-        end
-        local mv = Vector3.new()
-        local cam = camera.CFrame
-        if UserInputService:IsKeyDown(Enum.KeyCode.W) then mv = mv + cam.LookVector end
-        if UserInputService:IsKeyDown(Enum.KeyCode.S) then mv = mv - cam.LookVector end
-        if UserInputService:IsKeyDown(Enum.KeyCode.A) then mv = mv - cam.RightVector end
-        if UserInputService:IsKeyDown(Enum.KeyCode.D) then mv = mv + cam.RightVector end
-        if UserInputService:IsKeyDown(Enum.KeyCode.Space) then mv = mv + Vector3.new(0,1,0) end
-        if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then mv = mv - Vector3.new(0,1,0) end
-        if mv.Magnitude > 0 then
-            bodyVel.Velocity = mv.Unit * flySpeed
-        else
-            bodyVel.Velocity = Vector3.new(0,0,0)
-        end
-        bodyGyro.CFrame = camera.CFrame
-    else
-        if bodyGyro then bodyGyro:Destroy(); bodyGyro = nil end
-        if bodyVel then bodyVel:Destroy(); bodyVel = nil end
+local function NewLine()
+    if DrawingAvailable then
+        local line = Drawing.new and Drawing.new("Line") or Drawing.Line and Drawing.Line.new and Drawing.Line.new()
+        return line
     end
+    return nil
+end
 
-    -- noclip
-    if noclipEnabled and char then
-        for _,part in pairs(char:GetDescendants()) do
-            if part:IsA("BasePart") and part.CanCollide then
-                part.CanCollide = false
-            end
-        end
-    end
+-- ====== Feature States ======
+local state = {
+    -- Pull
+    pullEnabled = false,
+    pullStrength = 60,
+    legitPull = false,
+    legitPullStrength = 35,
+    -- Movement
+    speedEnabled = false,
+    walkSpeed = 16,
+    jumpEnabled = false,
+    jumpPower = 50,
+    flyEnabled = false,
+    flySpeed = 60,
+    -- Teleport
+    teleportDistance = 50,
+    -- Kick Aimbot
+    kickAimbot = false,
+    kickBind = Enum.KeyCode.E,
+    kickAimbotFOV = 180,
+    kickAimbotSmooth = 0.35,
+    -- Landing Indicator
+    landingIndicator = false,
+    landingPredictionSamples = 60,
+    -- Park Matchmaking
+    parkSupport = false,
+    -- Click tackle
+    clickTackle = false,
+    tackleDashSpeed = 120,
+    tackleRange = 10,
+    -- Big head
+    bigHead = false,
+    bigHeadScale = 3,
+}
 
-    -- stamina override
-    if staminaOverride then
-        staminaRef = staminaRef or findStamina()
-        if staminaRef and staminaRef.Parent then
-            pcall(function() staminaRef.Value = math.max(staminaRef.Value, 9999) end)
-        end
-    end
-
-    -- enforce speed/jump on respawn
-    local hum = getHumanoid()
-    if hum then
-        if speedActive then hum.WalkSpeed = speedValue else hum.WalkSpeed = defaultWalk end
-        hum.JumpPower = jpValue
-    end
-end)
-
--- Player tab
-local tabPlayer = Window:MakeTab({ Name = "Player", Icon = "rbxassetid://6023426915", PremiumOnly = false })
-tabPlayer:AddSlider({ Name = "Player Size (scale)", Min = 0.5, Max = 2.5, Default = 1, Increment = 0.05, Callback = function(v)
-    local c = getChar()
-    pcall(function()
-        for _,stat in pairs({"BodyHeightScale","BodyWidthScale","BodyDepthScale","HeadScale"}) do
-            if c:FindFirstChild("Humanoid") and c.Humanoid:FindFirstChild(stat) then
-                c.Humanoid[stat].Value = v
-            end
-        end
-    end)
-end })
-tabPlayer:AddColorpicker({ Name = "Custom Jersey Color", Default = Color3.fromRGB(255,0,0), Callback = function(col)
-    local c = getChar()
-    pcall(function()
-        for _,part in pairs(c:GetDescendants()) do
-            if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
-                part.Color = col
-            end
-        end
-    end)
-end })
-tabPlayer:AddTextbox({ Name = "Custom Display Name", Default = "", TextDisappear = true, Callback = function(txt)
-    local hum = getHumanoid()
-    if hum then
-        pcall(function() hum.DisplayName = txt end)
-    end
-end })
-
--- Combat tab: Godmode (clientside)
-local tabCombat = Window:MakeTab({ Name = "Combat", Icon = "rbxassetid://3926307978", PremiumOnly = false })
-local godEnabled = false
-tabCombat:AddToggle({ Name = "Godmode (client-side)", Default = false, Callback = function(v) godEnabled = v end })
-RunService.Heartbeat:Connect(function()
-    if godEnabled then
-        local hum = getHumanoid()
-        if hum then
-            pcall(function() hum.Health = hum.MaxHealth end)
+-- ====== QB: Pass Assist FOV (visual only) and Kick Aimbot ======
+local fovCircle = NewCircle()
+if fovCircle then
+    fovCircle.Color = Color3.fromRGB(0,255,0)
+    fovCircle.Thickness = 2
+    fovCircle.Transparency = 0.7
+    fovCircle.Filled = false
+    fovCircle.Radius = 120
+    fovCircle.Position = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)
+    fovCircle.Visible = false
+end
+tabQB:AddToggle({
+    Name = "Pass Assist FOV (visual)",
+    Default = false,
+    Callback = function(v)
+        if fovCircle then
+            fovCircle.Visible = v
         end
     end
-end)
+})
 
--- Utility tab: ESP & Skeleton & Teleport
-local tabUtil = Window:MakeTab({ Name = "Utility", Icon = "rbxassetid://4483345998", PremiumOnly = false })
-local espEnabled = false
-local espTable = {}
-
-tabUtil:AddToggle({ Name = "ESP Name Tags", Default = false, Callback = function(v)
-    espEnabled = v
-    if not v then
-        for _,g in pairs(espTable) do pcall(function() g:Destroy() end) end
-        espTable = {}
+-- Kick Aimbot UI
+tabKicker:AddToggle({
+    Name = "Kick Aimbot (aim & attempt kick)",
+    Default = false,
+    Callback = function(v) state.kickAimbot = v end
+})
+tabKicker:AddSlider({
+    Name = "Kick Aimbot FOV (px)",
+    Min = 50, Max = 800, Default = state.kickAimbotFOV, Increment = 5,
+    Callback = function(v) state.kickAimbotFOV = v end
+})
+tabKicker:AddSlider({
+    Name = "Kick Aim Smooth",
+    Min = 0, Max = 1, Default = state.kickAimbotSmooth, Increment = 0.01,
+    Callback = function(v) state.kickAimbotSmooth = v end
+})
+tabKicker:AddBind({
+    Name = "Kick Bind (press to attempt a kick at target)",
+    Default = state.kickBind,
+    Hold = false,
+    Callback = function()
+        -- On bind pressed we attempt to take a shot at the best target
+        -- Implementation below uses the same logic as the aimbot loop with attemptKick() call
+        -- immediate trigger handled in InputBegan below
     end
-end })
-tabUtil:AddToggle({ Name = "Skeleton Markers (basic)", Default = false, Callback = function(v)
-    -- toggled inside run loop below
-    skeletonEnabled = v
-end })
+})
 
-tabUtil:AddTextbox({ Name = "Teleport to Player", Default = "", TextDisappear = true, Callback = function(val)
-    local tp = Players:FindFirstChild(val)
-    if tp and tp.Character and getRoot(tp) then
-        local root = getRoot(LocalPlayer)
-        if root then
-            LocalPlayer.Character:MoveTo(getRoot(tp).Position + Vector3.new(0,5,0))
-        end
-    end
-end })
-
--- ESP loop
-RunService.RenderStepped:Connect(function()
-    if espEnabled then
-        for _,plr in pairs(Players:GetPlayers()) do
-            if plr ~= LocalPlayer and isAlive(plr) then
-                if not espTable[plr] then
-                    local head = plr.Character and plr.Character:FindFirstChild("Head")
-                    if head then
-                        local gui = Instance.new("BillboardGui", head)
-                        gui.Name = "SwebESP"
-                        gui.Size = UDim2.new(0,120,0,40)
-                        gui.StudsOffset = Vector3.new(0,1.5,0)
-                        gui.AlwaysOnTop = true
-                        local txt = Instance.new("TextLabel", gui)
-                        txt.Size = UDim2.new(1,0,1,0)
-                        txt.BackgroundTransparency = 1
-                        txt.TextScaled = true
-                        txt.Text = plr.Name
-                        espTable[plr] = gui
-                    end
+-- helper: find best target head in FOV from center/mouse
+local function getBestReceiverInFOV(fovPixels)
+    local best = nil
+    local bestDist = math.huge
+    local mousePos = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2) -- center-based FOV
+    for _,p in pairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer and isAlive(p) and p.Character then
+            local head = p.Character:FindFirstChild("Head")
+            if head then
+                local sp = Camera:WorldToScreenPoint(head.Position)
+                local screenPos = Vector2.new(sp.X, sp.Y)
+                local d = (screenPos - mousePos).Magnitude
+                if d <= fovPixels and d < bestDist then
+                    bestDist = d
+                    best = head
                 end
             end
         end
-        -- cleanup
-        for pl,gui in pairs(espTable) do
-            if not isAlive(pl) then pcall(function() gui:Destroy() end); espTable[pl] = nil end
+    end
+    return best
+end
+
+-- attempt to trigger pass/kick using heuristic methods
+local function attemptKick(targetHead)
+    if not targetHead or not targetHead.Parent then return false end
+
+    -- 1) Try to find a tool named like ball/football in character/backpack and activate it
+    local tool = nil
+    for _,obj in pairs(LocalPlayer.Character:GetChildren()) do
+        if obj:IsA("Tool") and string.match(string.lower(obj.Name), "ball") then tool = obj; break end
+    end
+    if not tool then
+        for _,obj in pairs(LocalPlayer.Backpack:GetChildren()) do
+            if obj:IsA("Tool") and string.match(string.lower(obj.Name), "ball") then tool = obj; break end
+        end
+    end
+    if tool then
+        pcall(function()
+            if tool.Parent ~= LocalPlayer.Character then
+                LocalPlayer.Character.Humanoid:EquipTool(tool)
+                wait(0.05)
+            end
+            -- many football tools use Activate
+            if typeof(tool.Activate) == "function" then tool:Activate() end
+            -- try to call remote events under tool
+            for _,d in pairs(tool:GetDescendants()) do
+                if d:IsA("RemoteEvent") then
+                    pcall(function() d:FireServer(targetHead.Parent.Name, targetHead.Position) end)
+                elseif d:IsA("RemoteFunction") then
+                    pcall(function() d:InvokeServer(targetHead.Parent.Name, targetHead.Position) end)
+                end
+            end
+        end)
+        print("[SwebHub] Attempted kick using tool:", tool.Name)
+        return true
+    end
+
+    -- 2) Try scanning ReplicatedStorage/Workspace for a pass/throw remote
+    local function scanContainer(ct)
+        local candidates = {}
+        for _,o in pairs(ct:GetDescendants()) do
+            if (o:IsA("RemoteEvent") or o:IsA("RemoteFunction")) and string.match(string.lower(o.Name), "pass") or string.match(string.lower(o.Name), "throw") or string.match(string.lower(o.Name), "kick") then
+                table.insert(candidates, o)
+            end
+        end
+        return candidates
+    end
+    local candidates = {}
+    for _,ct in pairs({ReplicatedStorage, Workspace, LocalPlayer, LocalPlayer.Character}) do
+        pcall(function()
+            for _,c in pairs(scanContainer(ct)) do table.insert(candidates, c) end
+        end)
+    end
+    for _,r in pairs(candidates) do
+        pcall(function()
+            if r:IsA("RemoteEvent") then
+                r:FireServer(targetHead.Position)
+                print("[SwebHub] Fired RemoteEvent:", r:GetFullName())
+            elseif r:IsA("RemoteFunction") then
+                r:InvokeServer(targetHead.Position)
+                print("[SwebHub] Invoked RemoteFunction:", r:GetFullName())
+            end
+        end)
+        return true
+    end
+
+    -- 3) fallback: just face the target and try to interact (simulate key press)
+    if targetHead.Parent and targetHead.Parent:FindFirstChild("HumanoidRootPart") then
+        local root = getRootPart()
+        if root then
+            root.CFrame = CFrame.new(root.Position, targetHead.Position)
+        end
+    end
+
+    return false
+end
+
+-- Kick aimbot runtime (smoothly aim camera at chosen receiver; automatic attempt on bind)
+local kickMousePressed = false
+UserInputService.InputBegan:Connect(function(inp, gp)
+    if gp then return end
+    if inp.UserInputType == Enum.UserInputType.MouseButton1 and state.kickAimbot and kickMousePressed then
+        -- handled by bind later
+    end
+    -- detect bind
+    if inp.KeyCode == state.kickBind and state.kickAimbot then
+        -- find best target and attempt kick
+        local best = getBestReceiverInFOV(state.kickAimbotFOV)
+        if best then
+            -- smooth camera aim: lerp over short time
+            local camC = Camera.CFrame
+            local desired = CFrame.new(camC.Position, best.Position)
+            local steps = 8
+            for i = 1,steps do
+                Camera.CFrame = camC:Lerp(desired, math.clamp(state.kickAimbotSmooth * (i/steps) * 60, 0, 1))
+                wait()
+            end
+            attemptKick(best)
         end
     end
 end)
 
--- Settings
-local tabSettings = Window:MakeTab({ Name = "Settings", Icon = "rbxassetid://7072727166", PremiumOnly = false })
-tabSettings:AddButton({ Name = "Unload Sweb Hub", Callback = function()
-    -- quick cleanup
-    passAssistEnabled = false; speedActive = false; flyEnabled = false; noclipEnabled = false; staminaOverride = false; godEnabled = false; espEnabled = false
-    OrionLib:Destroy()
-end })
+-- ====== Movement: WalkSpeed, JumpPower, Fly, Teleport Forward, Big Head ======
+-- WalkSpeed toggle + slider
+local speedToggle, jumpToggle, flyToggle, bigHeadToggle
+tabMovement:AddToggle({
+    Name = "Enable WalkSpeed",
+    Default = false,
+    Callback = function(v) state.speedEnabled = v end
+})
+tabMovement:AddSlider({
+    Name = "WalkSpeed Amount",
+    Min = 16, Max = 200, Default = state.walkSpeed, Increment = 1,
+    Callback = function(v) state.walkSpeed = v end
+})
+tabMovement:AddToggle({
+    Name = "Enable JumpPower",
+    Default = false,
+    Callback = function(v) state.jumpEnabled = v end
+})
+tabMovement:AddSlider({
+    Name = "JumpPower Amount",
+    Min = 50, Max = 300, Default = state.jumpPower, Increment = 1,
+    Callback = function(v) state.jumpPower = v end
+})
 
--- Ensure features persist after respawn
-Players.LocalPlayer.CharacterAdded:Connect(function(char)
-    wait(1)
-    local hum = char:WaitForChild("Humanoid",5)
-    if hum then hum.JumpPower = jpValue; if speedActive then hum.WalkSpeed = speedValue end end
+-- Fly
+tabMovement:AddToggle({
+    Name = "Enable Fly",
+    Default = false,
+    Callback = function(v) state.flyEnabled = v end
+})
+tabMovement:AddSlider({
+    Name = "Fly Speed",
+    Min = 10, Max = 300, Default = state.flySpeed, Increment = 1,
+    Callback = function(v) state.flySpeed = v end
+})
+
+-- Teleport forward (button + distance slider)
+tabMovement:AddSlider({
+    Name = "Teleport Forward Distance",
+    Min = 10, Max = 500, Default = state.teleportDistance, Increment = 1,
+    Callback = function(v) state.teleportDistance = v end
+})
+tabMovement:AddButton({
+    Name = "Teleport Forward Now",
+    Callback = function()
+        local root = getRootPart()
+        if root then
+            local forward = Camera.CFrame.LookVector.Unit * state.teleportDistance
+            local newPos = root.Position + forward
+            pcall(function() root.CFrame = CFrame.new(newPos) end)
+        end
+    end
+})
+
+-- Big Head
+tabVisual:AddToggle({
+    Name = "Big Head",
+    Default = false,
+    Callback = function(v)
+        state.bigHead = v
+        if not v then
+            -- revert heads
+            for _,p in pairs(Players:GetPlayers()) do
+                if p.Character and p.Character:FindFirstChild("Head") then
+                    pcall(function() p.Character.Head.Size = Vector3.new(2,1,1) end)
+                end
+            end
+        end
+    end
+})
+tabVisual:AddSlider({
+    Name = "Big Head Scale",
+    Min = 1.5, Max = 6, Default = state.bigHeadScale, Increment = 0.1,
+    Callback = function(v) state.bigHeadScale = v end
+})
+
+-- ====== Pull Vector + Legit Pull Vector Tab ======
+tabPull:AddToggle({
+    Name = "Enable Pull Vector (magnet)",
+    Default = false,
+    Callback = function(v) state.pullEnabled = v end
+})
+tabPull:AddSlider({
+    Name = "Pull Strength",
+    Min = 10, Max = 300, Default = state.pullStrength, Increment = 5,
+    Callback = function(v) state.pullStrength = v end
+})
+tabPull:AddToggle({
+    Name = "Legit Pull Vector (smooth predictive)",
+    Default = false,
+    Callback = function(v) state.legitPull = v end
+})
+tabPull:AddSlider({
+    Name = "Legit Pull Strength",
+    Min = 10, Max = 200, Default = state.legitPullStrength, Increment = 1,
+    Callback = function(v) state.legitPullStrength = v end
+})
+
+-- ====== Click Tackle ======
+tabMisc:AddToggle({
+    Name = "Click Tackle (click a player to dash tackle)",
+    Default = false,
+    Callback = function(v) state.clickTackle = v end
+})
+tabMisc:AddSlider({
+    Name = "Tackle Dash Speed",
+    Min = 40, Max = 300, Default = state.tackleDashSpeed, Increment = 5,
+    Callback = function(v) state.tackleDashSpeed = v end
+})
+tabMisc:AddSlider({
+    Name = "Tackle Range",
+    Min = 3, Max = 30, Default = state.tackleRange, Increment = 1,
+    Callback = function(v) state.tackleRange = v end
+})
+
+-- ====== Football Landing Indicator ======
+local landingCircle = NewCircle()
+if landingCircle then
+    landingCircle.Color = Color3.fromRGB(255,0,0)
+    landingCircle.Thickness = 2
+    landingCircle.Transparency = 0.7
+    landingCircle.Filled = false
+    landingCircle.Visible = false
+end
+
+tabKicker:AddToggle({
+    Name = "Show Football Landing Indicator",
+    Default = false,
+    Callback = function(v) state.landingIndicator = v; if not v and landingCircle then landingCircle.Visible = false end end
+})
+tabKicker:AddSlider({
+    Name = "Prediction Samples",
+    Min = 10, Max = 200, Default = state.landingPredictionSamples, Increment = 5,
+    Callback = function(v) state.landingPredictionSamples = v end
+})
+
+-- ====== Park Matchmaking Support ======
+tabMisc:AddToggle({
+    Name = "Park Matchmaking Support (try auto-click join)",
+    Default = false,
+    Callback = function(v) state.parkSupport = v end
+})
+
+-- ====== Runtime Loops & Logic ======
+-- Fly implementation (using BodyVelocity + BodyGyro placed/removed cleanly)
+local flyBV, flyBG
+local flyConnection
+local function enableFly(enable)
+    local char = getChar()
+    if not char or not char.PrimaryPart then return end
+    if enable then
+        if not flyBV then
+            flyBV = Instance.new("BodyVelocity")
+            flyBG = Instance.new("BodyGyro")
+            flyBV.MaxForce = Vector3.new(1e5,1e5,1e5)
+            flyBV.P = 1250
+            flyBG.MaxTorque = Vector3.new(1e5,1e5,1e5)
+            flyBG.P = 1250
+            flyBV.Parent = char.PrimaryPart
+            flyBG.Parent = char.PrimaryPart
+        end
+    else
+        if flyBV then flyBV:Destroy(); flyBV = nil end
+        if flyBG then flyBG:Destroy(); flyBG = nil end
+    end
+end
+
+-- Click tackle handling
+local tackleActive = false
+local clickConn
+local function onClickTackle()
+    if not state.clickTackle then return end
+    local mTarget = Mouse.Target
+    if not mTarget then return end
+    local p = Players:GetPlayerFromCharacter(mTarget.Parent)
+    if not p or p == LocalPlayer then return end
+    -- attempt dash towards them if within distance
+    local myRoot = getRootPart()
+    local theirRoot = getRootPart(p)
+    if not myRoot or not theirRoot then return end
+    local dist = (theirRoot.Position - myRoot.Position).Magnitude
+    if dist > state.tackleRange then return end
+    -- dash: set velocity towards target for brief moment
+    local dir = (theirRoot.Position - myRoot.Position).Unit
+    local vel = dir * state.tackleDashSpeed
+    pcall(function() myRoot.Velocity = vel end)
+    -- optional: change state to PlatformStand for small time
+    local hum = getHumanoid()
+    if hum then
+        hum.PlatformStand = true
+        delay(0.4, function() if hum then hum.PlatformStand = false end end)
+    end
+end
+
+-- Pull Vector implementations
+local function applyPullToBall()
+    local ball = findBall()
+    local char = getChar()
+    if not ball or not char or not char:FindFirstChild("HumanoidRootPart") then return end
+    local hrp = char.HumanoidRootPart
+    if state.legitPull then
+        -- smooth predictive pull: use BodyVelocity and move toward a predicted ball position
+        local bvName = "SwebPullBV"
+        local existingBV = hrp:FindFirstChild(bvName)
+        if not existingBV then
+            local bv = Instance.new("BodyVelocity")
+            bv.Name = bvName
+            bv.MaxForce = Vector3.new(1e5,1e5,1e5)
+            bv.P = 1000
+            bv.Parent = hrp
+            addCleanup(function() pcall(function() bv:Destroy() end) end)
+            existingBV = bv
+        end
+        local bv = existingBV
+        -- predict ball position by taking current velocity into account for short duration
+        local ballVel = (ball.Velocity or Vector3.new())
+        local predictPos = ball.Position + ballVel * 0.2
+        local dir = (predictPos - hrp.Position)
+        if dir.Magnitude > 1 then
+            bv.Velocity = dir.Unit * state.legitPullStrength
+        else
+            bv.Velocity = Vector3.new(0,0,0)
+        end
+    else
+        -- instant pull: set HRP velocity directly toward ball
+        local dir = (ball.Position - hrp.Position)
+        if dir.Magnitude > 1 then
+            pcall(function() hrp.Velocity = dir.Unit * state.pullStrength end)
+        end
+    end
+end
+
+-- Landing indicator: simulate trajectory to find approximate landing point
+local function predictLandingPoint(part, samples)
+    if not part then return nil end
+    local gravity = workspace.Gravity or 196.2
+    local pos = part.Position
+    local vel = part.Velocity or Vector3.new()
+    local dt = 1/60
+    local lastPos = pos
+    for i = 1, samples do
+        vel = vel + Vector3.new(0, -gravity * dt, 0)
+        pos = pos + vel * dt
+        -- if we find a position where Y <= ground (approx using Raycast)
+        local rayOrigin = lastPos
+        local rayDir = pos - lastPos
+        local r = Workspace:Raycast(rayOrigin, rayDir, RaycastParams.new())
+        if r and r.Position then
+            return r.Position
+        end
+        lastPos = pos
+    end
+    return pos -- fallback, last simulated pos
+end
+
+-- Park matchmaking helper: try to find buttons labeled join/match/queue and click them
+local function runParkSupport()
+    if not state.parkSupport then return end
+    -- search for TextButtons in PlayerGui with keywords
+    local gui = LocalPlayer:FindFirstChildWhichIsA("PlayerGui")
+    if gui then
+        for _,child in pairs(gui:GetDescendants()) do
+            if child:IsA("TextButton") and child.Visible and child.Active then
+                local name = string.lower(child.Name)
+                local text = child.Text and string.lower(child.Text) or ""
+                if text:find("join") or text:find("match") or text:find("play") or name:find("match") or name:find("join") then
+                    pcall(function() child:Activate(); child.MouseButton1Click:Connect(function() end) end)
+                    print("[SwebHub] Attempted to click matchmaking button:", child:GetFullName())
+                    -- only click one per run
+                    return
+                end
+            end
+        end
+    end
+end
+
+-- ====== Main Render/Heartbeat Loop ======
+local renderConn
+renderConn = RunService.RenderStepped:Connect(function(dt)
+    -- Update FOV circle center and visibility (if present)
+    if fovCircle then
+        fovCircle.Position = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)
+        fovCircle.Radius = state.kickAimbotFOV
+    end
+
+    -- WalkSpeed enforcement
+    if state.speedEnabled then
+        local hum = getHumanoid()
+        if hum then
+            hum.WalkSpeed = state.walkSpeed
+        end
+    end
+
+    -- JumpPower enforcement
+    if state.jumpEnabled then
+        local hum = getHumanoid()
+        if hum then
+            hum.JumpPower = state.jumpPower
+        end
+    end
+
+    -- Fly logic: keep BV/BG updated
+    if state.flyEnabled then
+        enableFly(true)
+        local char = getChar()
+        if char and char.PrimaryPart and flyBV and flyBG then
+            local mv = Vector3.new()
+            local cam = Camera.CFrame
+            if UserInputService:IsKeyDown(Enum.KeyCode.W) then mv = mv + cam.LookVector end
+            if UserInputService:IsKeyDown(Enum.KeyCode.S) then mv = mv - cam.LookVector end
+            if UserInputService:IsKeyDown(Enum.KeyCode.A) then mv = mv - cam.RightVector end
+            if UserInputService:IsKeyDown(Enum.KeyCode.D) then mv = mv + cam.RightVector end
+            if UserInputService:IsKeyDown(Enum.KeyCode.Space) then mv = mv + Vector3.new(0,1,0) end
+            if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then mv = mv - Vector3.new(0,1,0) end
+            if mv.Magnitude > 0 then
+                flyBV.Velocity = mv.Unit * state.flySpeed
+            else
+                flyBV.Velocity = Vector3.new(0,0,0)
+            end
+            flyBG.CFrame = Camera.CFrame
+        end
+    else
+        enableFly(false)
+    end
+
+    -- Pull Vector handling
+    if state.pullEnabled then
+        local success, err = pcall(applyPullToBall)
+        if not success then
+            -- ignore
+        end
+    else
+        -- cleanup potential BodyVelocity named SwebPullBV
+        local hrp = getRootPart()
+        if hrp and hrp:FindFirstChild("SwebPullBV") then
+            pcall(function() hrp.SwebPullBV:Destroy() end)
+        end
+    end
+
+    -- Kick Aimbot visual (if enabled: track and smooth aim to best target while not pressing bind)
+    if state.kickAimbot then
+        -- auto aim camera softly toward best receiver within FOV if the user holds right mouse button
+        if UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) then
+            local bestHead = getBestReceiverInFOV(state.kickAimbotFOV)
+            if bestHead then
+                local camC = Camera.CFrame
+                local desired = CFrame.new(camC.Position, bestHead.Position)
+                if state.kickAimbotSmooth <= 0 then
+                    Camera.CFrame = desired
+                else
+                    Camera.CFrame = camC:Lerp(desired, math.clamp(state.kickAimbotSmooth * dt * 60, 0, 1))
+                end
+            end
+        end
+    end
+
+    -- Football landing indicator
+    if state.landingIndicator then
+        local ball = findBall()
+        if ball and landingCircle then
+            local landPos = predictLandingPoint(ball, state.landingPredictionSamples)
+            if landPos then
+                local screenPos, onScreen = Camera:WorldToScreenPoint(landPos)
+                if onScreen then
+                    landingCircle.Position = Vector2.new(screenPos.X, screenPos.Y)
+                    landingCircle.Radius = 8
+                    landingCircle.Visible = true
+                else
+                    landingCircle.Visible = false
+                end
+            else
+                landingCircle.Visible = false
+            end
+        else
+            if landingCircle then landingCircle.Visible = false end
+        end
+    end
+
+    -- Park matchmaking
+    if state.parkSupport then
+        pcall(runParkSupport)
+    end
+
+    -- Big Head
+    if state.bigHead then
+        for _,p in pairs(Players:GetPlayers()) do
+            if p.Character and p.Character:FindFirstChild("Head") then
+                local head = p.Character.Head
+                pcall(function()
+                    head.Size = Vector3.new(state.bigHeadScale, state.bigHeadScale, state.bigHeadScale)
+                end)
+            end
+        end
+    end
 end)
 
+addCleanup(function()
+    if renderConn then renderConn:Disconnect() end
+end)
+
+-- ====== Mouse click tackle connection ======
+local clickConn
+clickConn = Mouse.Button1Down:Connect(function()
+    if state.clickTackle then
+        onClickTackle()
+    end
+end)
+addCleanup(function() if clickConn then clickConn:Disconnect() end end)
+
+-- ====== Teleport Forward bind (Q for example) ======
+-- Add a bind button via UserInputService
+UserInputService.InputBegan:Connect(function(input, gp)
+    if gp then return end
+    if input.KeyCode == Enum.KeyCode.Q then
+        local root = getRootPart()
+        if root then
+            local forward = Camera.CFrame.LookVector.Unit * state.teleportDistance
+            local newPos = root.Position + forward
+            pcall(function() root.CFrame = CFrame.new(newPos) end)
+        end
+    end
+end)
+
+-- ====== Unload button ======
+local settingsTab = Window:MakeTab({Name="Settings", Icon="rbxassetid://7072727166"})
+settingsTab:AddButton({
+    Name = "Unload Sweb Hub (clean)",
+    Callback = function()
+        -- revert walk/jump/fly/pull things
+        state.pullEnabled = false
+        state.legitPull = false
+        state.flyEnabled = false
+        state.speedEnabled = false
+        state.jumpEnabled = false
+        state.landingIndicator = false
+        -- remove drawing objects
+        if fovCircle then pcall(function() fovCircle.Visible = false; fovCircle:Remove() end) end
+        if landingCircle then pcall(function() landingCircle.Visible = false; landingCircle:Remove() end) end
+        -- revert big head
+        for _,p in pairs(Players:GetPlayers()) do
+            if p.Character and p.Character:FindFirstChild("Head") then
+                pcall(function() p.Character.Head.Size = Vector3.new(2,1,1) end)
+            end
+        end
+        doCleanup()
+        OrionLib:Destroy()
+        print("[SwebHub] Unloaded")
+    end
+})
+
+-- ====== Notes + debug prints ======
+print("[SwebHub] Loaded: Pull Vector, Legit Pull, WalkSpeed, JumpPower, Fly, Teleport Forward, Kick Aimbot, Landing Indicator, Park Support, Click Tackle, Big Head")
+print("[SwebHub] Tips: Press Q to teleport forward. Hold RMB to auto aim (kick aimbot). Use the Kick Bind (E by default) to attempt a targeted kick. Tweak object names if the game uses different ones.")
+
+-- Initialize Orion
 OrionLib:Init()
-print("[SwebHub] Loaded for NFL Universe (SZN1). Tips: Use RMB to aim with Pass Assist, toggle Auto Throw if you want the script to attempt to send the pass automatically.")
