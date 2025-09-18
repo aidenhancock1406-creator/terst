@@ -1,75 +1,70 @@
--- Sweb Hub - Shrink Hide & Seek Full
+-- Sweb Hub - Shrink Hide & Seek
+local OrionLib = loadstring(game:HttpGet('https://raw.githubusercontent.com/adminabuser/terst/refs/heads/main/source.lua'))()
+
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
 local LocalPlayer = Players.LocalPlayer
-local Camera = Workspace.CurrentCamera
 local Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
 local Humanoid = Character:FindFirstChildOfClass("Humanoid")
 local Root = Character:FindFirstChild("HumanoidRootPart") or Character:FindFirstChild("Torso")
+local Camera = Workspace.CurrentCamera
 
--- Skeleton ESP Settings
-local SkeletonSettings = {Color = Color3.new(0, 1, 0), Thickness = 2, Transparency = 1}
-local skeletons = {}
-
--- Hider/Seeker State
+-- ===== State =====
 local state = {
-    fly = false,
-    invisible = false,
-    shrink = false,
-    shrinkSize = 0.5,
-    noClip = false,
-    speedEnabled = false,
-    walkSpeed = 16,
-    esp = false,
-    shrinkOther = false,
-    shrinkPower = 0.5
+    fly=false,
+    invisible=false,
+    shrink=false,
+    shrinkSize=0.5,
+    noClip=false,
+    speedEnabled=false,
+    walkSpeed=16,
+    esp=false,
+    shrinkOther=false,
+    shrinkPower=0.5
 }
 
--- ===== Drawing Skeleton ESP =====
-local function createLine()
-    local line = Drawing.new("Line")
-    return line
-end
+-- ===== Skeleton ESP =====
+local SkeletonSettings = {Color=Color3.new(0,1,0), Thickness=2, Transparency=1}
+local skeletons = {}
 
-local function removeSkeleton(skeleton)
-    for _, line in pairs(skeleton) do
-        line:Remove()
-    end
+local function createLine() return Drawing.new("Line") end
+
+local function removeSkeleton(skel)
+    for _,line in pairs(skel) do line:Remove() end
 end
 
 local function trackPlayer(plr)
-    local skeleton = {}
-    local function updateSkeleton()
+    local skel = {}
+    local function update()
         if not plr.Character or not plr.Character:FindFirstChild("HumanoidRootPart") then
-            for _, line in pairs(skeleton) do line.Visible = false end
+            for _,l in pairs(skel) do l.Visible=false end
             return
         end
-
-        local character = plr.Character
-        local humanoid = character:FindFirstChild("Humanoid")
+        local c = plr.Character
+        local hum = c:FindFirstChild("Humanoid")
+        if not hum then return end
         local joints = {}
-        local connections = {}
-
-        if humanoid.RigType == Enum.HumanoidRigType.R15 then
+        local conns = {}
+        if hum.RigType==Enum.HumanoidRigType.R15 then
             joints = {
-                ["Head"] = character:FindFirstChild("Head"),
-                ["UpperTorso"] = character:FindFirstChild("UpperTorso"),
-                ["LowerTorso"] = character:FindFirstChild("LowerTorso"),
-                ["LeftUpperArm"] = character:FindFirstChild("LeftUpperArm"),
-                ["LeftLowerArm"] = character:FindFirstChild("LeftLowerArm"),
-                ["LeftHand"] = character:FindFirstChild("LeftHand"),
-                ["RightUpperArm"] = character:FindFirstChild("RightUpperArm"),
-                ["RightLowerArm"] = character:FindFirstChild("RightLowerArm"),
-                ["RightHand"] = character:FindFirstChild("RightHand"),
-                ["LeftUpperLeg"] = character:FindFirstChild("LeftUpperLeg"),
-                ["LeftLowerLeg"] = character:FindFirstChild("LeftLowerLeg"),
-                ["RightUpperLeg"] = character:FindFirstChild("RightUpperLeg"),
-                ["RightLowerLeg"] = character:FindFirstChild("RightLowerLeg")
+                ["Head"]=c:FindFirstChild("Head"),
+                ["UpperTorso"]=c:FindFirstChild("UpperTorso"),
+                ["LowerTorso"]=c:FindFirstChild("LowerTorso"),
+                ["LeftUpperArm"]=c:FindFirstChild("LeftUpperArm"),
+                ["LeftLowerArm"]=c:FindFirstChild("LeftLowerArm"),
+                ["LeftHand"]=c:FindFirstChild("LeftHand"),
+                ["RightUpperArm"]=c:FindFirstChild("RightUpperArm"),
+                ["RightLowerArm"]=c:FindFirstChild("RightLowerArm"),
+                ["RightHand"]=c:FindFirstChild("RightHand"),
+                ["LeftUpperLeg"]=c:FindFirstChild("LeftUpperLeg"),
+                ["LeftLowerLeg"]=c:FindFirstChild("LeftLowerLeg"),
+                ["RightUpperLeg"]=c:FindFirstChild("RightUpperLeg"),
+                ["RightLowerLeg"]=c:FindFirstChild("RightLowerLeg")
             }
-            connections = {
+            conns = {
                 {"Head","UpperTorso"},{"UpperTorso","LowerTorso"},
                 {"LowerTorso","LeftUpperLeg"},{"LeftUpperLeg","LeftLowerLeg"},
                 {"LowerTorso","RightUpperLeg"},{"RightUpperLeg","RightLowerLeg"},
@@ -78,107 +73,73 @@ local function trackPlayer(plr)
             }
         else
             joints = {
-                ["Head"] = character:FindFirstChild("Head"),
-                ["Torso"] = character:FindFirstChild("Torso"),
-                ["LeftLeg"] = character:FindFirstChild("Left Leg"),
-                ["RightLeg"] = character:FindFirstChild("Right Leg"),
-                ["LeftArm"] = character:FindFirstChild("Left Arm"),
-                ["RightArm"] = character:FindFirstChild("Right Arm")
+                ["Head"]=c:FindFirstChild("Head"),
+                ["Torso"]=c:FindFirstChild("Torso"),
+                ["LeftLeg"]=c:FindFirstChild("Left Leg"),
+                ["RightLeg"]=c:FindFirstChild("Right Leg"),
+                ["LeftArm"]=c:FindFirstChild("Left Arm"),
+                ["RightArm"]=c:FindFirstChild("Right Arm")
             }
-            connections = {
-                {"Head","Torso"},{"Torso","LeftArm"},{"Torso","RightArm"},{"Torso","LeftLeg"},{"Torso","RightLeg"}
-            }
+            conns = {{"Head","Torso"},{"Torso","LeftArm"},{"Torso","RightArm"},{"Torso","LeftLeg"},{"Torso","RightLeg"}}
         end
-
-        for index, conn in ipairs(connections) do
-            local jointA, jointB = joints[conn[1]], joints[conn[2]]
-            if jointA and jointB then
-                local posA, onScreenA = Camera:WorldToViewportPoint(jointA.Position)
-                local posB, onScreenB = Camera:WorldToViewportPoint(jointB.Position)
-                local line = skeleton[index] or createLine()
-                skeleton[index] = line
-                line.Color = SkeletonSettings.Color
-                line.Thickness = SkeletonSettings.Thickness
-                line.Transparency = SkeletonSettings.Transparency
-                if onScreenA and onScreenB then
-                    line.From = Vector2.new(posA.X,posA.Y)
-                    line.To = Vector2.new(posB.X,posB.Y)
-                    line.Visible = state.esp
-                else line.Visible = false end
-            elseif skeleton[index] then
-                skeleton[index].Visible = false
-            end
+        for i,conn in ipairs(conns) do
+            local a,b=joints[conn[1]],joints[conn[2]]
+            if a and b then
+                local posA,onA=Camera:WorldToViewportPoint(a.Position)
+                local posB,onB=Camera:WorldToViewportPoint(b.Position)
+                local line = skel[i] or createLine()
+                skel[i]=line
+                line.Color=SkeletonSettings.Color
+                line.Thickness=SkeletonSettings.Thickness
+                line.Transparency=SkeletonSettings.Transparency
+                if onA and onB then
+                    line.From=Vector2.new(posA.X,posA.Y)
+                    line.To=Vector2.new(posB.X,posB.Y)
+                    line.Visible=state.esp
+                else line.Visible=false end
+            elseif skel[i] then skel[i].Visible=false end
         end
     end
-
-    RunService.RenderStepped:Connect(function()
-        if state.esp and plr ~= LocalPlayer then updateSkeleton() end
-    end)
-    skeletons[plr] = skeleton
+    RunService.RenderStepped:Connect(function() if plr and plr.Parent then update() end end)
+    skeletons[plr]=skel
 end
 
 local function untrackPlayer(plr)
-    if skeletons[plr] then
-        removeSkeleton(skeletons[plr])
-        skeletons[plr] = nil
-    end
+    if skeletons[plr] then removeSkeleton(skeletons[plr]) skeletons[plr]=nil end
 end
 
 for _,plr in pairs(Players:GetPlayers()) do if plr~=LocalPlayer then trackPlayer(plr) end end
 Players.PlayerAdded:Connect(function(plr) if plr~=LocalPlayer then trackPlayer(plr) end end)
 Players.PlayerRemoving:Connect(untrackPlayer)
 
--- ===== Main Loop =====
-RunService.RenderStepped:Connect(function()
-    local char = LocalPlayer.Character
-    if not char then return end
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    local root = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso")
+-- ===== GUI =====
+local Window = OrionLib:MakeWindow({Name="Sweb Hub - Shrink Hide & Seek", HidePremium=false, SaveConfig=true, ConfigFolder="SwebHubConfig", IntroEnabled=true, IntroText="Sweb Hub - Shrink Hide & Seek", IntroIcon="https://example.com/icon.png"})
 
-    -- WalkSpeed
-    if state.speedEnabled and hum then hum.WalkSpeed = state.walkSpeed else if hum then hum.WalkSpeed=16 end end
+-- Tabs
+local tabHider = Window:MakeTab({Name="Hider", Icon="rbxassetid://4483345998"})
+local tabSeeker = Window:MakeTab({Name="Seeker", Icon="rbxassetid://4483345998"})
 
-    -- Fly
-    if state.fly and root then
-        local dir = Vector3.new()
-        if UserInputService:IsKeyDown(Enum.KeyCode.W) then dir+=Camera.CFrame.LookVector end
-        if UserInputService:IsKeyDown(Enum.KeyCode.S) then dir-=Camera.CFrame.LookVector end
-        if UserInputService:IsKeyDown(Enum.KeyCode.A) then dir-=Camera.CFrame.RightVector end
-        if UserInputService:IsKeyDown(Enum.KeyCode.D) then dir+=Camera.CFrame.RightVector end
-        if UserInputService:IsKeyDown(Enum.KeyCode.Space) then dir+=Vector3.new(0,1,0) end
-        if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then dir-=Vector3.new(0,1,0) end
-        root.Velocity = dir.Magnitude>0 and dir.Unit*60 or Vector3.new()
-    end
+-- ===== Hider Toggles =====
+tabHider:AddToggle({Name="Fly", Default=false, Callback=function(v) state.fly=v end})
+tabHider:AddToggle({Name="Invisible", Default=false, Callback=function(v) state.invisible=v end})
+tabHider:AddToggle({Name="Shrink", Default=false, Callback=function(v) state.shrink=v end})
+tabHider:AddSlider({Name="Shrink Size", Min=0.1, Max=1, Default=0.5, Increment=0.05, Callback=function(v) state.shrinkSize=v end})
+tabHider:AddToggle({Name="No-Clip", Default=false, Callback=function(v) state.noClip=v end})
+tabHider:AddToggle({Name="WalkSpeed", Default=false, Callback=function(v) state.speedEnabled=v end})
+tabHider:AddSlider({Name="WalkSpeed Value", Min=16, Max=100, Default=16, Increment=1, Callback=function(v) state.walkSpeed=v end})
 
-    -- Invisible + NoClip
-    for _,p in pairs(char:GetDescendants()) do
-        if p:IsA("BasePart") or p:IsA("MeshPart") then
-            p.Transparency = state.invisible and 1 or 0
-            p.CanCollide = not state.noClip
-        elseif p:IsA("Decal") then
-            p.Transparency = state.invisible and 1 or 0
-        end
-    end
+-- ===== Seeker Toggles =====
+tabSeeker:AddToggle({Name="ESP Skeleton", Default=false, Callback=function(v) state.esp=v end})
+tabSeeker:AddToggle({Name="Shrink Hiders", Default=false, Callback=function(v) state.shrinkOther=v end})
+tabSeeker:AddSlider({Name="Shrink Power", Min=0.1, Max=1, Default=0.5, Increment=0.05, Callback=function(v) state.shrinkPower=v end})
 
-    -- Shrink
-    if state.shrink then
-        for _,p in pairs(char:GetDescendants()) do
-            if p:IsA("BasePart") or p:IsA("MeshPart") then
-                p.Size = p.Size.Unit*state.shrinkSize
-            end
-        end
-    end
-
-    -- Shrink Other (Seeker)
-    if state.shrinkOther then
-        for _,plr in pairs(Players:GetPlayers()) do
-            if plr~=LocalPlayer and plr.Character then
-                for _,p in pairs(plr.Character:GetDescendants()) do
-                    if p:IsA("BasePart") or p:IsA("MeshPart") then
-                        p.Size = p.Size.Unit*state.shrinkPower
-                    end
-                end
-            end
-        end
+-- ===== GUI Toggle =====
+UserInputService.InputBegan:Connect(function(input, processed)
+    if processed then return end
+    if input.KeyCode==Enum.KeyCode.RightShift then
+        Window:Toggle()
     end
 end)
+
+OrionLib:Init()
+print("[SwebHub] Shrink Hide & Seek Menu Loaded!")
