@@ -4,6 +4,6 @@ local keyScript = loadstring(game:HttpGet("https://raw.githubusercontent.com/aid
 -- Validate the key
 keyScript(function()
     -- Load and execute the hm.lua script after key validation
-    local mainScript = loadstring(game:HttpGet("https://raw.githubusercontent.com/aidenhancock1406-creator/terst/main/hm.lua"))()
+    local mainScript = loadstring(game:HttpGet("https://raw.githubusercontent.com/aidenhancock1406-creator/terst/main/main.lua"))()
     mainScript()
 end)
