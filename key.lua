@@ -1,5 +1,5 @@
 -- Define the key required to access the UI
-local requiredKey = "NFL123"
+local requiredKey = "swbhubkey7"
 
 -- Load the Orion library
 local OrionLib = loadstring(game:HttpGet(('https://raw.githubusercontent.com/aidenhancock1406-creator/terst/refs/heads/main/source.lua')))()
@@ -44,6 +44,20 @@ local function requestKey(onSuccess)
                     Time = 5
                 })
             end
+        end
+    })
+
+    -- Add a button to copy the Discord link
+    Tab:AddButton({
+        Name = "Discord Link (KEY)",
+        Callback = function()
+            setclipboard("https://discord.gg/Q9caeDr2M8")
+            OrionLib:MakeNotification({
+                Name = "Copied",
+                Content = "Discord link copied to clipboard!",
+                Image = "rbxassetid://4483345998",
+                Time = 5
+            })
         end
     })
 
