@@ -1,4 +1,4 @@
--- Sweb Hub - NFL Universe Full Script (Fully Functional)
+-- Sweb Hub - NFL Universe Full Script (QB Lock-On ESP + Pull + Everything)
 local OrionLib = loadstring(game:HttpGet(('https://raw.githubusercontent.com/aidenhancock1406-creator/terst/refs/heads/main/source.lua')))()
 
 local Players = game:GetService("Players")
@@ -29,6 +29,30 @@ end
 -- Find pass remote
 local function getPassRemote()
     return ReplicatedStorage:FindFirstChild("PassBall") -- change if remote has different name
+end
+
+-- ESP utility
+local function createESP(target)
+    if not target.Character or not target.Character:FindFirstChild("Head") then return end
+    local head = target.Character.Head
+    local box = head:FindFirstChild("SwebESP") or Instance.new("BoxHandleAdornment")
+    box.Name = "SwebESP"
+    box.Adornee = head
+    box.Color3 = Color3.new(0,1,0)
+    box.Transparency = 0.4
+    box.AlwaysOnTop = true
+    box.Size = Vector3.new(2,2,2)
+    box.Parent = head
+end
+
+local function removeESP(target)
+    if target.Character then
+        local head = target.Character:FindFirstChild("Head")
+        if head then
+            local box = head:FindFirstChild("SwebESP")
+            if box then box:Destroy() end
+        end
+    end
 end
 
 -- Window & Tabs
@@ -76,6 +100,9 @@ tabQB:AddToggle({
     Name = "Enable QB Lock-On",
     Default = false,
     Callback = function(v)
+        -- remove previous ESP
+        for _,p in pairs(state.targets) do removeESP(p) end
+
         state.qbLock = v
         if v then
             state.targets = {}
@@ -83,6 +110,8 @@ tabQB:AddToggle({
                 if p ~= LocalPlayer and isAlive(p) then table.insert(state.targets, p) end
             end
             state.currentTargetIndex = 1
+            local tgt = state.targets[state.currentTargetIndex]
+            if tgt then createESP(tgt) end
         end
     end
 })
@@ -93,36 +122,20 @@ UserInputService.InputBegan:Connect(function(input, gp)
     if gp then return end
     if input.KeyCode == Enum.KeyCode.L and state.qbLock then
         if #state.targets == 0 then return end
+        local prev = state.targets[state.currentTargetIndex]
+        removeESP(prev)
+
         state.currentTargetIndex = state.currentTargetIndex + 1
         if state.currentTargetIndex > #state.targets then state.currentTargetIndex = 1 end
         local tgt = state.targets[state.currentTargetIndex]
         if tgt and isAlive(tgt) then
+            createESP(tgt)
             print("[SwebHub] QB Lock-On: now locked on to", tgt.Name)
         end
     end
 end)
 
 -- Intercept throw to aim at locked-on player
-local playerChar = getChar()
-local playerRoot = getRootPart()
-RunService.RenderStepped:Connect(function()
-    playerChar = getChar()
-    playerRoot = getRootPart()
-    if not playerChar or not playerRoot then return end
-
-    -- QB camera lock
-    if state.qbLock then
-        local target = state.targets[state.currentTargetIndex]
-        if target and target.Character and target.Character:FindFirstChild("Head") then
-            -- Only rotate camera smoothly toward target while allowing manual movement
-            local camCFrame = Camera.CFrame
-            local lookDir = (target.Character.Head.Position - camCFrame.Position).Unit
-            Camera.CFrame = CFrame.new(camCFrame.Position, camCFrame.Position + lookDir)
-        end
-    end
-end)
-
--- Override throw to send ball to locked-on player
 local throwRemote = getPassRemote()
 if throwRemote then
     local oldFire = throwRemote.FireServer
@@ -215,4 +228,4 @@ end)
 
 -- Initialize Orion
 OrionLib:Init()
-print("[SwebHub] Full Script Loaded. QB Lock-On, Pull Vector, Kick Aimbot, Movement, Visuals ready. Press L to switch QB target.")
+print("[SwebHub] Full Script Loaded. QB Lock-On with ESP, Pull Vector, Kick Aimbot, Movement, Visuals ready. Press L to switch QB target.")
